@@ -1,0 +1,324 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Release pipeline — triggered by pushing a version tag (v*)
+#
+# Produces for each release:
+#   - Windows x86_64:  .zip archive  +  .msi installer (WiX)
+#   - Linux x86_64:    .tar.gz       +  .deb package
+#   - Linux aarch64:   .tar.gz       +  .deb package (cross-compiled)
+#   - macOS universal: .tar.gz (fat binary via lipo: x86_64 + aarch64)
+#   - macOS per-arch:  .tar.gz (one per architecture)
+#
+# Archive names follow the self_update crate convention:
+#   {bin}-v{version}-{target}.{tar.gz|zip}
+# ──────────────────────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: folder-scanner
+
+jobs:
+  # ── Create the GitHub Release (draft) ────────────────────────────────────────
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: meta
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Release version: $VERSION"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --draft \
+            --generate-notes
+
+  # ── Build matrix ─────────────────────────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.name }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Windows x86_64 ──
+          - name: windows-x64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_ext: zip
+            installer: msi
+
+          # ── Linux x86_64 ──
+          - name: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            installer: deb
+
+          # ── Linux aarch64 (cross-compiled) ──
+          - name: linux-arm64
+            os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            installer: deb
+            cross: true
+
+          # ── macOS x86_64 ──
+          - name: macos-x64
+            os: macos-13
+            target: x86_64-apple-darwin
+            archive_ext: tar.gz
+
+          # ── macOS aarch64 ──
+          - name: macos-arm64
+            os: macos-14
+            target: aarch64-apple-darwin
+            archive_ext: tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # ── Linux cross-compilation deps ──
+      - name: Install cross-compilation tools (aarch64-linux)
+        if: matrix.cross == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      # ── Build ──
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # ── Stage artifacts ──
+      - name: Stage artifacts (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          STAGING="staging-${{ matrix.target }}"
+          mkdir -p "$STAGING"
+          cp "target/${{ matrix.target }}/release/$BIN_NAME" "$STAGING/"
+          cp README.md LICENSE "$STAGING/" 2>/dev/null || true
+
+      - name: Stage artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $STAGING = "staging-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $STAGING | Out-Null
+          Copy-Item "target\${{ matrix.target }}\release\$env:BIN_NAME.exe" "$STAGING\"
+          Copy-Item README.md, LICENSE -Destination "$STAGING\" -ErrorAction SilentlyContinue
+
+      # ── Create archive ──
+      - name: Create tar.gz archive
+        if: matrix.archive_ext == 'tar.gz'
+        shell: bash
+        run: |
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCHIVE="${BIN_NAME}-v${VERSION}-${{ matrix.target }}.tar.gz"
+          tar czf "$ARCHIVE" -C "staging-${{ matrix.target }}" .
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "Created: $ARCHIVE"
+
+      - name: Create zip archive
+        if: matrix.archive_ext == 'zip'
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.create-release.outputs.version }}"
+          $ARCHIVE = "$env:BIN_NAME-v$VERSION-${{ matrix.target }}.zip"
+          Compress-Archive -Path "staging-${{ matrix.target }}\*" -DestinationPath $ARCHIVE
+          Add-Content -Path $env:GITHUB_ENV -Value "ARCHIVE=$ARCHIVE"
+          Write-Host "Created: $ARCHIVE"
+
+      # ── Linux .deb package ──
+      - name: Install cargo-deb
+        if: matrix.installer == 'deb'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
+
+      - name: Build .deb package
+        if: matrix.installer == 'deb'
+        shell: bash
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cargo deb --no-build --target ${{ matrix.target }}
+          else
+            cargo deb --target ${{ matrix.target }}
+          fi
+          DEB_FILE=$(find target/ -name "*.deb" -type f | head -1)
+          if [ -n "$DEB_FILE" ]; then
+            # Move to workspace root for easy upload
+            cp "$DEB_FILE" .
+            DEB_FILE=$(basename "$DEB_FILE")
+            echo "DEB_FILE=$DEB_FILE" >> "$GITHUB_ENV"
+            echo "Built: $DEB_FILE"
+          else
+            echo "::warning::No .deb file produced"
+          fi
+
+      # ── Windows .msi installer ──
+      - name: Install WiX toolset
+        if: matrix.installer == 'msi'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.*
+          wix extension add WixToolset.UI.wixext
+
+      - name: Install cargo-wix
+        if: matrix.installer == 'msi'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-wix
+
+      - name: Build MSI installer
+        if: matrix.installer == 'msi'
+        shell: pwsh
+        run: |
+          # Initialize WiX manifest if not committed
+          if (-not (Test-Path "wix")) {
+            cargo wix init
+          }
+
+          cargo wix --no-build --target ${{ matrix.target }}
+
+          $MSI = Get-ChildItem -Path "target\wix" -Filter "*.msi" -Recurse |
+                 Select-Object -First 1
+          if ($MSI) {
+            Copy-Item $MSI.FullName .
+            $MSI_NAME = $MSI.Name
+            Add-Content -Path $env:GITHUB_ENV -Value "MSI_FILE=$MSI_NAME"
+            Write-Host "Built: $MSI_NAME"
+          } else {
+            Write-Host "::warning::No .msi file produced"
+          }
+
+      # ── Upload to release ──
+      - name: Upload archive to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+
+      - name: Upload .deb to release
+        if: matrix.installer == 'deb'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ -n "$DEB_FILE" ]; then
+            gh release upload "$GITHUB_REF_NAME" "$DEB_FILE" --clobber
+          fi
+
+      - name: Upload .msi to release
+        if: matrix.installer == 'msi'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if [ -n "$MSI_FILE" ]; then
+            gh release upload "$GITHUB_REF_NAME" "$MSI_FILE" --clobber
+          fi
+
+      # ── Upload raw binary for macOS universal job ──
+      - name: Upload macOS binary artifact
+        if: contains(matrix.target, 'apple-darwin')
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/${{ env.BIN_NAME }}
+          if-no-files-found: error
+
+  # ── macOS universal binary ──────────────────────────────────────────────────
+  macos-universal:
+    name: macOS Universal Binary
+    needs: [create-release, build]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download x86_64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-x86_64-apple-darwin
+          path: macos-x64
+
+      - name: Download aarch64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-aarch64-apple-darwin
+          path: macos-arm64
+
+      - name: Create universal binary via lipo
+        shell: bash
+        run: |
+          mkdir -p staging-universal
+          lipo -create \
+            macos-x64/$BIN_NAME \
+            macos-arm64/$BIN_NAME \
+            -output staging-universal/$BIN_NAME
+          chmod +x staging-universal/$BIN_NAME
+
+          # Verify it's actually universal
+          file staging-universal/$BIN_NAME
+          lipo -info staging-universal/$BIN_NAME
+
+      - name: Create universal archive
+        shell: bash
+        run: |
+          cp README.md LICENSE staging-universal/ 2>/dev/null || true
+          VERSION="${{ needs.create-release.outputs.version }}"
+          ARCHIVE="${BIN_NAME}-v${VERSION}-universal-apple-darwin.tar.gz"
+          tar czf "$ARCHIVE" -C staging-universal .
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          echo "Created: $ARCHIVE"
+
+      - name: Upload universal archive to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+
+  # ── Publish release (un-draft) ──────────────────────────────────────────────
+  publish-release:
+    name: Publish Release
+    needs: [create-release, build, macos-universal]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --draft=false

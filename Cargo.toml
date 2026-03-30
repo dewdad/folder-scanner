@@ -69,6 +69,26 @@ windows-sys = { version = "0.59", features = [
 
 [build-dependencies]
 
+# ── Packaging metadata ─────────────────────────────────────────────────────────
+
+[package.metadata.deb]
+maintainer = "dewdad"
+section = "utils"
+priority = "optional"
+extended-description = """\
+Scans files and folders for vulnerabilities, malware, and suspicious patterns \
+using Trivy, ClamAV, YARA rules, and Windows Defender in parallel. \
+Integrates with your file manager's right-click context menu."""
+assets = [
+    ["target/release/folder-scanner", "usr/bin/", "755"],
+]
+
+[package.metadata.wix]
+upgrade-guid = "A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
+path-guid = "B2C3D4E5-F6A7-8901-BCDE-F12345678901"
+license = false
+eula = false
+
 [profile.release]
 strip = true
 lto = true
