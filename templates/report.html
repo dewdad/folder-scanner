@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Security Scan Report — {{ report.target_path }}</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+    }
+
+    section { margin-bottom: 2.5rem; }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #f0f6fc;
+      border-bottom: 1px solid #30363d;
+      padding-bottom: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    .report-header {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1.5rem 2rem;
+      margin-bottom: 2rem;
+    }
+
+    .report-header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #f0f6fc;
+      margin-bottom: 1rem;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 0.75rem;
+    }
+
+    .meta-item { display: flex; flex-direction: column; }
+    .meta-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+      margin-bottom: 2px;
+    }
+    .meta-value { font-weight: 600; color: #e6edf3; word-break: break-all; }
+
+    /* ── Severity badge ──────────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .badge-CRITICAL { background: #dc3545; color: #fff; }
+    .badge-HIGH     { background: #fd7e14; color: #fff; }
+    .badge-MEDIUM   { background: #ffc107; color: #212529; }
+    .badge-LOW      { background: #17a2b8; color: #fff; }
+    .badge-UNKNOWN  { background: #6c757d; color: #fff; }
+
+    /* ── Tables ──────────────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    thead th {
+      background: #161b22;
+      color: #8b949e;
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 0.6rem 0.9rem;
+      text-align: left;
+      border-bottom: 1px solid #30363d;
+    }
+
+    tbody tr { border-bottom: 1px solid #21262d; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #161b22; }
+
+    td { padding: 0.6rem 0.9rem; vertical-align: middle; color: #c9d1d9; }
+
+    .table-wrap {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      overflow: hidden;
+      overflow-x: auto;
+    }
+
+    .status-ok   { color: #3fb950; font-weight: 600; }
+    .status-fail { color: #f85149; font-weight: 600; }
+
+    /* ── Stats cards ─────────────────────────────────────────────────────── */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+    }
+
+    .stat-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 1rem 1.2rem;
+      text-align: center;
+    }
+
+    .stat-card .stat-count {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1;
+      margin-bottom: 0.3rem;
+    }
+
+    .stat-card .stat-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #8b949e;
+    }
+
+    .stat-critical { border-top: 3px solid #dc3545; }
+    .stat-critical .stat-count { color: #dc3545; }
+
+    .stat-high { border-top: 3px solid #fd7e14; }
+    .stat-high .stat-count { color: #fd7e14; }
+
+    .stat-medium { border-top: 3px solid #ffc107; }
+    .stat-medium .stat-count { color: #ffc107; }
+
+    .stat-low { border-top: 3px solid #17a2b8; }
+    .stat-low .stat-count { color: #17a2b8; }
+
+    .stat-unknown { border-top: 3px solid #6c757d; }
+    .stat-unknown .stat-count { color: #6c757d; }
+
+    /* ── Finding cards ───────────────────────────────────────────────────── */
+    .finding-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+    }
+
+    .finding-summary {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+
+    .finding-summary::-webkit-details-marker { display: none; }
+
+    .finding-summary:hover { background: #1c2128; }
+
+    .finding-title {
+      font-weight: 600;
+      color: #f0f6fc;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .finding-scanner {
+      font-size: 0.75rem;
+      color: #8b949e;
+      white-space: nowrap;
+    }
+
+    .finding-body {
+      padding: 0.75rem 1rem 1rem 1rem;
+      border-top: 1px solid #21262d;
+    }
+
+    .finding-body dl {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.4rem 1rem;
+    }
+
+    .finding-body dt {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #8b949e;
+      padding-top: 2px;
+    }
+
+    .finding-body dd { color: #c9d1d9; word-break: break-word; }
+
+    /* ── Footer ──────────────────────────────────────────────────────────── */
+    footer {
+      text-align: center;
+      font-size: 0.78rem;
+      color: #8b949e;
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid #21262d;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div class="report-header">
+    <h1>&#x1F6E1;&#xFE0F; Security Scan Report</h1>
+    <div class="meta-grid">
+      <div class="meta-item">
+        <span class="meta-label">Target</span>
+        <span class="meta-value">{{ report.target_path }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Scan Time</span>
+        <span class="meta-value">{{ report.scan_time }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Duration</span>
+        <span class="meta-value">{{ (report.total_duration_ms / 1000.0) | round(2) }}s</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Min Severity</span>
+        <span class="meta-value">{{ report.min_severity }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Report ID</span>
+        <span class="meta-value" style="font-family: monospace; font-size: 0.8rem;">{{ report.id }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Scanner Overview ───────────────────────────────────────────────── -->
+  <section id="scanners">
+    <h2>Scanner Overview</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Scanner</th>
+            <th>Status</th>
+            <th>Findings</th>
+            <th>Duration</th>
+            <th>Version</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in scanner_summaries %}
+          <tr>
+            <td>{{ s.name }}</td>
+            <td>
+              {% if s.success %}
+                <span class="status-ok">&#x2713; OK</span>
+              {% else %}
+                <span class="status-fail">&#x2717; FAILED</span>
+              {% endif %}
+            </td>
+            <td>{{ s.finding_count }}</td>
+            <td>{{ (s.duration_ms / 1000.0) | round(2) }}s</td>
+            <td>{{ s.version | default(value="-") }}</td>
+            <td style="color:#f85149; font-size:0.8rem;">{{ s.error | default(value="") }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ── Statistics ─────────────────────────────────────────────────────── -->
+  <section id="statistics">
+    <h2>Statistics — {{ stats.total_findings }} Total Finding{% if stats.total_findings != 1 %}s{% endif %}</h2>
+    <div class="stats-grid">
+      <div class="stat-card stat-critical">
+        <div class="stat-count">{{ stats.critical_count }}</div>
+        <div class="stat-label">Critical</div>
+      </div>
+      <div class="stat-card stat-high">
+        <div class="stat-count">{{ stats.high_count }}</div>
+        <div class="stat-label">High</div>
+      </div>
+      <div class="stat-card stat-medium">
+        <div class="stat-count">{{ stats.medium_count }}</div>
+        <div class="stat-label">Medium</div>
+      </div>
+      <div class="stat-card stat-low">
+        <div class="stat-count">{{ stats.low_count }}</div>
+        <div class="stat-label">Low</div>
+      </div>
+      <div class="stat-card stat-unknown">
+        <div class="stat-count">{{ stats.unknown_count }}</div>
+        <div class="stat-label">Unknown</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Findings ───────────────────────────────────────────────────────── -->
+  <section id="findings">
+    <h2>Findings</h2>
+
+    {% if findings | length == 0 %}
+      <p style="color:#3fb950; padding: 1rem 0;">&#x2713; No findings at or above the minimum severity threshold.</p>
+    {% else %}
+      {% for f in findings %}
+      <details class="finding-card">
+        <summary class="finding-summary">
+          <span class="badge badge-{{ f.severity }}">{{ f.severity }}</span>
+          <span class="finding-title">{{ f.title }}</span>
+          <span class="finding-scanner">{{ f.scanner }}</span>
+        </summary>
+        <div class="finding-body">
+          <dl>
+            <dt>Category</dt>
+            <dd>{{ f.category }}</dd>
+
+            <dt>File</dt>
+            <dd style="font-family: monospace; font-size: 0.85rem;">{{ f.file_path }}</dd>
+
+            <dt>Description</dt>
+            <dd>{{ f.description }}</dd>
+
+            {% if f.remediation %}
+            <dt>Remediation</dt>
+            <dd>{{ f.remediation }}</dd>
+            {% endif %}
+
+            {% if f.reference_url %}
+            <dt>Reference</dt>
+            <dd><a href="{{ f.reference_url }}" target="_blank" rel="noopener noreferrer">{{ f.reference_url }}</a></dd>
+            {% endif %}
+          </dl>
+        </div>
+      </details>
+      {% endfor %}
+    {% endif %}
+  </section>
+
+</div>
+
+<footer>
+  Generated by <strong>folder-scanner v0.1.0</strong>
+</footer>
+</body>
+</html>

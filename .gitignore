@@ -1,0 +1,9 @@
+/target
+*.pdb
+*.exe
+.env
+.vscode/
+.idea/
+*.swp
+*~
+nul
